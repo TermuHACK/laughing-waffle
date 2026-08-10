@@ -38,16 +38,16 @@ SYSTEM_TOOL_INSTRUCTION = """Ты — автономный терминальн�
 """
 
 def search_ddg(query: str, max_results: int = 4) -> str:
-try:
-results = list(DDGS().text(query, max_results=max_results))
-if not results:
-return "Результаты поиска не найдены."
-formatted = []
-for i, r in enumerate(results, 1):
-formatted.append(f"[{i}] {r.get('title')}\nURL: {r.get('href')}\nContent: {r.get('body')}\n")
-return "\n".join(formatted)
-except Exception as e:
-return f"Ошибка поиска DuckDuckGo: {str(e)}"
+    try:
+        results = list(DDGS().text(query, max_results=max_results))
+        if not results:
+            return "Результаты поиска не найдены."
+        formatted = []
+        for i, r in enumerate(results, 1):
+            formatted.append(f"[{i}] {r.get('title')}\nURL: {r.get('href')}\nContent: {r.get('body')}\n")
+        return "\n".join(formatted)
+    except Exception as e:
+        return f"Ошибка поиска DuckDuckGo: {str(e)}"
 
 class ChatMessage(BaseModel):
 role: str
