@@ -66,28 +66,61 @@ class ChatCompletionRequest(BaseModel):
 
 @app.get("/health")
 @app.get("/healthz")
+@app.get("/health")
+@app.get("/healthz")
 async def health():
-return {"status": "ok", "uptime_seconds": round(time.time() - START_TIME, 2)}
+    return {"status": "ok", "uptime_seconds": round(time.time() - START_TIME, 2)}
+
 
 @app.get("/v1/models")
 async def list_models():
-return {
-"object": "list",
-"data": [
-{"id": "gpt-4o", "object": "model", "owned_by": "g4f"},
-{"id": "gpt-4o-mini", "object": "model", "owned_by": "g4f"},
-{"id": "llama-3.3-70b", "object": "model", "owned_by": "g4f"},
-{"id": "deepseek-v3", "object": "model", "owned_by": "g4f"},
-{"id": "qwen-2.5-72b", "object": "model", "owned_by": "g4f"}
-]
-}
+    return {
+        "object": "list",
+        "data": [
+            {"id": "gpt-4o", "object": "model", "owned_by": "g4f"},
+            {"id": "gpt-4o-mini", "object": "model", "owned_by": "g4f"},
+            {"id": "llama-3.3-70b", "object": "model", "owned_by": "g4f"},
+            {"id": "deepseek-v3", "object": "model", "owned_by": "g4f"},
+            {"id": "qwen-2.5-72b", "object": "model", "owned_by": "g4f"}
+        ]
+    }
+
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
-if request.stream:
-raise HTTPException(status_code=400, detail="Streaming non-supported")
+    if request.stream:
+        raise HTTPException(status_code=400, detail="Streaming non-supported")
 
-```
+    try:
+        raw_messages = [m.model_dump() for m in request.messages]
+
+        if not any(m.get("role") == "system" for m in raw_messages):
+            raw_messages.insert(0, {"role": "system", "content": SYSTEM_TOOL_INSTRUCTION})
+
+        if request.web_search and len(raw_messages) > 0:
+            last_user_prompt = raw_messages[-1]["content"]
+            search_context = search_ddg(last_user_prompt)
+            raw_messages.insert(1, {
+                "role": "system",
+                "content": f"Свежие результаты поиска из DuckDuckGo:\n{search_context}"
+            })
+
+        response = await g4f_client.chat.completions.create(
+            model=request.model,
+            messages=raw_messages
+        )
+        content = response.choices[0].message.content
+
+        return {
+            "id": f"chatcmpl-{int(time.time() * 1000)}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": request.model,
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": -1, "completion_tokens": -1, "total_tokens": -1}
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"G4F Execution Error: {str(e)}")
 try:
     raw_messages = [m.model_dump() for m in request.messages]
 
