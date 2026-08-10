@@ -3,13 +3,11 @@ from typing import List, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import uvicorn
-from g4f.client import Client
+from g4f.client import AsyncClient  # <--- Переходим на асинхронный клиент
 
-# Отключение генерации OpenAPI/Swagger документации ускоряет старт приложения в 2-3 раза
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
-# Предварительная инициализация клиента g4f
-g4f_client = Client()
+g4f_client = AsyncClient()
 START_TIME = time.time()
 
 class ChatMessage(BaseModel):
@@ -22,14 +20,10 @@ class ChatCompletionRequest(BaseModel):
     temperature: Optional[float] = 0.7
     stream: Optional[bool] = False
 
-# Health-эндпоинты для Docker / Kubernetes / систем мониторинга
 @app.get("/health")
 @app.get("/healthz")
 async def health():
-    return {
-        "status": "ok",
-        "uptime_seconds": round(time.time() - START_TIME, 2)
-    }
+    return {"status": "ok", "uptime_seconds": round(time.time() - START_TIME, 2)}
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
@@ -39,8 +33,8 @@ async def chat_completions(request: ChatCompletionRequest):
     try:
         raw_messages = [m.model_dump() for m in request.messages]
         
-        # Прямой вызов g4f без кэширования
-        response = g4f_client.chat.completions.create(
+        # Вызов через await предотвращает запуск второго event loop
+        response = await g4f_client.chat.completions.create(
             model=request.model,
             messages=raw_messages
         )
@@ -75,5 +69,4 @@ async def list_models():
     }
 
 if __name__ == "__main__":
-    # access_log=False убирает задержки на диск/консоль при обработке запросов
     uvicorn.run(app, host="0.0.0.0", port=8000, access_log=False)
