@@ -1,171 +1,134 @@
-import os
 import time
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import uvicorn
 
 from g4f.client import AsyncClient
 from duckduckgo_search import DDGS
+from g4f import models
+
 
 app = FastAPI(
     docs_url=None,
     redoc_url=None,
-    openapi_url=None,
+    openapi_url=None
 )
 
-g4f_client = AsyncClient()
+client = AsyncClient()
 START_TIME = time.time()
-
-API_KEY = os.getenv("AGENT_API_KEY", "")
 
 
 SYSTEM_PROMPT = r"""
-Ты — автономный Linux-агент и терминальный помощник пользователя.
+Ты автономный Linux-агент.
 
-Ты можешь самостоятельно использовать инструменты локального компьютера.
+Ты можешь выполнять действия на компьютере пользователя через инструменты.
 
-ДОСТУПНЫЕ ИНСТРУМЕНТЫ:
+ИНСТРУМЕНТЫ:
 
-1. Выполнение Bash-команды:
+Bash:
 
 <<<TOOL bash>>>
 команда
 <<<END_TOOL>>>
 
-2. Чтение файла:
+Чтение файла:
 
 <<<TOOL read_file>>>
-/путь/к/файлу
+/path/to/file
 <<<END_TOOL>>>
 
-3. Запись файла:
+Запись файла:
 
 <<<TOOL write_file>>>
-/путь/к/файлу
-содержимое файла
+/path/to/file
+содержимое
 <<<END_TOOL>>>
 
-4. Поиск по файлам через grep:
+Поиск текста:
 
 <<<TOOL grep>>>
-параметры grep
+-rni "текст" /path
 <<<END_TOOL>>>
 
-Примеры:
-
-<<<TOOL grep>>>
--rni "TODO" /home/user/project
-<<<END_TOOL>>>
-
-<<<TOOL grep>>>
--r "error" /var/log
-<<<END_TOOL>>>
-
-5. Интернет-поиск:
+Интернет:
 
 <<<TOOL web_search>>>
 поисковый запрос
 <<<END_TOOL>>>
 
 
-ПРАВИЛА АГЕНТА:
+ПРАВИЛА:
 
-- Ты настоящий автономный агент.
-- Не ограничивайся одним ответом, если задачу можно решить действиями.
-- После каждого инструмента анализируй полный результат.
-- При необходимости вызывай следующий инструмент.
-- Можно выполнять много последовательных инструментов.
-- Не утверждай, что действие выполнено, пока не получил результат.
-- Не выдумывай stdout, stderr или содержимое файлов.
-- Для диагностики системы используй bash.
-- Для поиска конкретного текста в проекте используй grep.
-- Для чтения небольшого файла используй read_file.
-- Для создания или изменения файла используй write_file.
-- После изменения файла желательно проверить его содержимое или запустить соответствующую проверку.
-- Если команда завершилась ошибкой, проанализируй ошибку и попробуй исправить её.
-- Для актуальной информации используй web_search.
-- Не используй web_search без необходимости.
-- Не удаляй данные без необходимости.
-- Перед потенциально разрушительными операциями учитывай последствия.
-- После выполнения задачи сообщи краткий итог.
+- После каждого инструмента анализируй результат.
+- Если задача требует нескольких действий — выполняй их последовательно.
+- Не говори, что действие выполнено, пока не получил результат.
+- Не выдумывай результаты команд.
+- Используй grep для поиска по проектам.
+- Используй read_file для чтения файлов.
+- Используй write_file для изменения файлов.
+- Используй bash для запуска программ, тестов и диагностики.
+- Используй web_search для актуальной информации.
+- После изменения файлов проверяй результат.
+- Если команда завершилась ошибкой — попробуй разобраться и исправить её.
+- Продолжай работу до фактического завершения задачи.
+- В конце дай краткий итог.
 
-РАБОЧИЙ ЦИКЛ:
-
-1. Понять задачу.
-2. Исследовать состояние системы.
-3. Найти необходимые файлы.
-4. Выполнить изменения.
-5. Проверить изменения.
-6. Исправить обнаруженные проблемы.
-7. Завершить задачу.
-
-Инструменты выполняются НЕ на сервере с LLM.
-Они выполняются локальным клиентом пользователя.
-
-Если инструмент не нужен — просто ответь пользователю обычным текстом.
+Ты не просто отвечаешь пользователю — ты самостоятельно решаешь поставленную задачу.
 """
 
 
-class ChatMessage(BaseModel):
+class Message(BaseModel):
     role: str
     content: str
 
 
-class ChatCompletionRequest(BaseModel):
+class Request(BaseModel):
     model: str = "gpt-4o"
-    messages: List[ChatMessage]
+    messages: List[Message]
     temperature: Optional[float] = 0.2
     stream: Optional[bool] = False
-    web_search: Optional[bool] = False
 
 
-def check_auth(authorization: Optional[str]):
-    if not API_KEY:
-        return
-
-    if authorization != f"Bearer {API_KEY}":
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid API key"
-        )
-
-
-def search_ddg(
-    query: str,
-    max_results: int = 5
-) -> str:
-
+def search(query: str) -> str:
     try:
         results = list(
             DDGS().text(
                 query,
-                max_results=max_results
+                max_results=5
             )
         )
 
         if not results:
-            return "Результаты поиска не найдены."
+            return "Ничего не найдено."
 
-        output = []
+        out = []
 
-        for i, result in enumerate(results, 1):
-            output.append(
-                f"[{i}] {result.get('title', '')}\n"
-                f"URL: {result.get('href', '')}\n"
-                f"{result.get('body', '')}"
+        for i, r in enumerate(results, 1):
+            out.append(
+                f"[{i}] {r.get('title', '')}\n"
+                f"URL: {r.get('href', '')}\n"
+                f"{r.get('body', '')}"
             )
 
-        return "\n\n".join(output)
+        return "\n\n".join(out)
 
     except Exception as e:
-        return f"Ошибка DuckDuckGo: {e}"
+        return f"Ошибка поиска: {e}"
 
 
-def get_g4f_models():
+@app.get("/health")
+@app.get("/healthz")
+async def health():
+    return {
+        "status": "ok",
+        "uptime": round(time.time() - START_TIME, 2)
+    }
 
-    from g4f import models
+
+@app.get("/v1/models")
+async def models_list():
 
     result = []
 
@@ -175,7 +138,7 @@ def get_g4f_models():
         []
     )
 
-    model_registry = getattr(
+    registry = getattr(
         models,
         "__models__",
         {}
@@ -186,15 +149,14 @@ def get_g4f_models():
         item = {
             "id": model_id,
             "object": "model",
-            "owned_by": "g4f",
+            "owned_by": "g4f"
         }
 
         try:
-            if model_id in model_registry:
 
-                model_obj, providers = model_registry[
-                    model_id
-                ]
+            if model_id in registry:
+
+                model_obj, providers = registry[model_id]
 
                 item["name"] = getattr(
                     model_obj,
@@ -202,167 +164,110 @@ def get_g4f_models():
                     model_id
                 )
 
-                item["providers"] = []
-
-                for provider in providers:
-
-                    if not getattr(
-                        provider,
+                item["providers"] = [
+                    getattr(
+                        p,
+                        "__name__",
+                        str(p)
+                    )
+                    for p in providers
+                    if getattr(
+                        p,
                         "working",
                         True
-                    ):
-                        continue
-
-                    item["providers"].append(
-                        getattr(
-                            provider,
-                            "__name__",
-                            str(provider)
-                        )
                     )
+                ]
 
         except Exception:
             pass
 
         result.append(item)
 
-    return result
-
-
-@app.get("/health")
-@app.get("/healthz")
-async def health():
-
     return {
-        "status": "ok",
-        "uptime_seconds": round(
-            time.time() - START_TIME,
-            2
-        )
+        "object": "list",
+        "data": result
     }
 
 
-@app.get("/v1/models")
-async def list_models(
-    authorization: Optional[str] = Header(None)
-):
-
-    check_auth(authorization)
-
-    try:
-
-        return {
-            "object": "list",
-            "data": get_g4f_models()
-        }
-
-    except Exception as e:
-
-        raise HTTPException(
-            status_code=500,
-            detail=f"G4F model discovery error: {e}"
-        )
-
-
 @app.get("/v1/providers")
-async def list_providers(
-    authorization: Optional[str] = Header(None)
-):
-
-    check_auth(authorization)
+async def providers_list():
 
     try:
 
         from g4f.Provider import __providers__
 
-        providers = []
+        result = []
 
         for provider in __providers__:
 
-            if not getattr(
+            if getattr(
                 provider,
                 "working",
                 False
             ):
-                continue
 
-            providers.append({
-                "id": provider.__name__,
-                "object": "provider",
-                "label": getattr(
-                    provider,
-                    "label",
-                    provider.__name__
-                ),
-                "url": getattr(
-                    provider,
-                    "url",
-                    None
-                )
-            })
+                result.append({
+                    "id": provider.__name__,
+                    "object": "provider",
+                    "url": getattr(
+                        provider,
+                        "url",
+                        None
+                    )
+                })
 
         return {
             "object": "list",
-            "data": providers
+            "data": result
         }
 
     except Exception as e:
 
         raise HTTPException(
-            status_code=500,
-            detail=f"G4F provider discovery error: {e}"
+            500,
+            f"Provider error: {e}"
         )
 
 
 @app.get("/v1/search")
-async def search(
-    q: str,
-    authorization: Optional[str] = Header(None)
-):
-
-    check_auth(authorization)
+async def web_search(q: str):
 
     if not q.strip():
 
         raise HTTPException(
-            status_code=400,
-            detail="Empty query"
+            400,
+            "Empty query"
         )
 
     return {
         "query": q,
-        "results": search_ddg(q)
+        "results": search(q)
     }
 
 
 @app.post("/v1/chat/completions")
-async def chat_completions(
-    request: ChatCompletionRequest,
-    authorization: Optional[str] = Header(None)
-):
-
-    check_auth(authorization)
+async def chat(request: Request):
 
     if request.stream:
 
         raise HTTPException(
-            status_code=400,
-            detail="Streaming is not supported"
+            400,
+            "Streaming is not supported"
         )
 
     try:
 
-        raw_messages = [
-            message.model_dump()
-            for message in request.messages
+        messages = [
+            m.model_dump()
+            for m in request.messages
         ]
 
         if not any(
-            message.get("role") == "system"
-            for message in raw_messages
+            m["role"] == "system"
+            for m in messages
         ):
 
-            raw_messages.insert(
+            messages.insert(
                 0,
                 {
                     "role": "system",
@@ -370,35 +275,9 @@ async def chat_completions(
                 }
             )
 
-        if request.web_search:
-
-            last_user = ""
-
-            for message in reversed(raw_messages):
-
-                if message.get("role") == "user":
-
-                    last_user = message.get(
-                        "content",
-                        ""
-                    )
-
-                    break
-
-            if last_user:
-
-                results = search_ddg(last_user)
-
-                raw_messages.append({
-                    "role": "system",
-                    "content":
-                        "Результаты интернет-поиска:\n\n"
-                        + results
-                })
-
-        response = await g4f_client.chat.completions.create(
+        response = await client.chat.completions.create(
             model=request.model,
-            messages=raw_messages,
+            messages=messages,
             temperature=request.temperature
         )
 
@@ -418,19 +297,14 @@ async def chat_completions(
                     },
                     "finish_reason": "stop"
                 }
-            ],
-            "usage": {
-                "prompt_tokens": -1,
-                "completion_tokens": -1,
-                "total_tokens": -1
-            }
+            ]
         }
 
     except Exception as e:
 
         raise HTTPException(
-            status_code=500,
-            detail=f"G4F Execution Error: {e}"
+            500,
+            f"G4F error: {e}"
         )
 
 
@@ -439,8 +313,6 @@ if __name__ == "__main__":
     uvicorn.run(
         app,
         host="0.0.0.0",
-        port=int(
-            os.getenv("PORT", "8000")
-        ),
+        port=8000,
         access_log=False
     )
