@@ -119,7 +119,5 @@ try:
 except Exception as e:
     raise HTTPException(status_code=500, detail=f"G4F Execution Error: {str(e)}")
 
-```
-
 if **name** == "**main**":
 uvicorn.run(app, host="0.0.0.0", port=8000, access_log=False)
