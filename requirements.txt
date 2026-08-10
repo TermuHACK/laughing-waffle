@@ -1,0 +1,4 @@
+fastapi
+uvicorn[standard]
+g4f[all]
+pydantic
