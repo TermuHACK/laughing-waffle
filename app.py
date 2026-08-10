@@ -53,15 +53,16 @@ def search_ddg(query: str, max_results: int = 4) -> str:
         return f"Ошибка поиска DuckDuckGo: {str(e)}"
 
 class ChatMessage(BaseModel):
-role: str
-content: str
+    role: str
+    content: str
+
 
 class ChatCompletionRequest(BaseModel):
-model: str = "gpt-4o"
-messages: List[ChatMessage]
-temperature: Optional[float] = 0.7
-stream: Optional[bool] = False
-web_search: Optional[bool] = False
+    model: str = "gpt-4o"
+    messages: List[ChatMessage]
+    temperature: Optional[float] = 0.7
+    stream: Optional[bool] = False
+    web_search: Optional[bool] = False
 
 @app.get("/health")
 @app.get("/healthz")
